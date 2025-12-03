@@ -1,0 +1,9 @@
+{
+  "name": "Taskflow-AI-Iota Meet",
+  "description": "A high-performance, real-time video conferencing application integrated with Gemini AI for meeting assistance, featuring screen sharing, chat, and secure room management.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ]
+}
