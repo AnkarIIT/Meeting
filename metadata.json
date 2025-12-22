@@ -1,0 +1,8 @@
+{
+  "name": "LuminaChat - Senior Dev Environment",
+  "description": "A professional Slack/Discord-style chat application featuring message grouping, threading, AI-powered responses with Gemini, and a real-time message simulator.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
