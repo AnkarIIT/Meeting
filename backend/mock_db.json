@@ -1,0 +1,33 @@
+[
+    {
+        "id": "alpha",
+        "title": "Project Alpha",
+        "text": "Project Alpha is our new internal project for real-time collaboration using WebSockets and low latency streaming.",
+        "keywords": [
+            "alpha",
+            "collaboration",
+            "websocket"
+        ]
+    },
+    {
+        "id": "beta",
+        "title": "Project Beta",
+        "text": "Project Beta focuses on the frontend migration to Next.js and Tailwind CSS for a premium user experience.",
+        "keywords": [
+            "beta",
+            "frontend",
+            "nextjs",
+            "tailwind"
+        ]
+    },
+    {
+        "id": "gamma",
+        "title": "Meeting Protocol",
+        "text": "Always start meetings with an agenda and record the session for the Copilot to process.",
+        "keywords": [
+            "protocol",
+            "agenda",
+            "record"
+        ]
+    }
+]
