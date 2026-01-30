@@ -1,16 +1,29 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import logging
 import asyncio
-import os
-from dotenv import load_dotenv
-from transcription import TranslationService
-from vector_store import VectorStore
 
-load_dotenv()
+from stt.deepgram_stream import DeepgramStreamer
+from nlp.keyword_detector import detector
+from rag.search import vector_search
+from cards.generator import card_generator
 
-app = FastAPI()
+# Simple Action Item Detector (Mock for demonstration)
+def detect_action_items(text: str):
+    triggers = ["i will", "let's", "to do", "action item", "remind me to", "schedule", "assign"]
+    text_lower = text.lower()
+    if any(trigger in text_lower for trigger in triggers):
+        return text.strip()
+    return None
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Real-Time Meeting Copilot API")
+
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,61 +32,102 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-vector_store = VectorStore()
-
 @app.get("/")
 async def root():
     return {"message": "Meeting Copilot API is running"}
 
-@app.post("/add-doc")
-async def add_doc(doc: dict):
-    vector_store.add_document(doc["id"], doc["text"], doc.get("metadata"))
-    return {"status": "success"}
+@app.post("/generate-mom")
+async def generate_mom(data: dict):
+    transcript = data.get("transcript", [])
+    # In a real app, this would call an LLM with the full transcript
+    # Mocking MoM generation for conference demo
+    return {
+        "title": "Minutes of Meeting",
+        "date": "Jan 30, 2026",
+        "summary": "Discussed the new product design and AI features. Successful demonstration of real-time transcription and HD video.",
+        "decisions": [
+            "Approved the use of 48kHz audio for all upcoming sessions.",
+            "Agreed to implement Gallery/Focus mode for larger meetings."
+        ],
+        "action_items": [
+            "Ankar to finalize the CSS visualizer components.",
+            "George to test the MoM export functionality across browsers."
+        ]
+    }
 
-@app.websocket("/listen")
+@app.websocket("/ws/audio")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
-    # Get params
-    src_lang = websocket.query_params.get("srcLang", "en-US")
-    tgt_lang = websocket.query_params.get("tgtLang", "hi")
-    
-    async def transcription_callback(transcript: str):
-        print(f"Transcript: {transcript}")
-        # Send transcript to client
-        await websocket.send_text(json.dumps({"transcript": transcript}))
-        
-        # Keyword Search/RAG
-        # This is a simple implementation: search for every transcript
-        # In a real app, you might want to filter for specific keywords or use an LLM
-        results = vector_store.search(transcript)
-        if results and results["documents"] and results["distances"][0][0] < 0.5: # Threshold
-             await websocket.send_text(json.dumps({
-                 "knowledge_card": {
-                     "title": results["metadatas"][0][0].get("title", "Related Info"),
-                     "summary": results["documents"][0][0],
-                     "id": results["ids"][0][0]
-                 }
-             }))
+    logger.info("WebSocket connection established")
 
-    transcription_service = TranslationService(transcription_callback, src_lang=src_lang, tgt_lang=tgt_lang)
-    started = await transcription_service.start()
-    
-    if not started:
+    async def on_transcript(text: str, is_final: bool):
+        try:
+            # Send transcript to client immediately
+            await websocket.send_json({
+                "type": "TRANSCRIPT",
+                "text": text,
+                "is_final": is_final
+            })
+
+            if is_final:
+                # Wrap AI processing in its own try-except to keep the connection alive
+                try:
+                    detected_keywords = detector.detect(text)
+                    for keyword in detected_keywords:
+                        await websocket.send_json({
+                            "type": "KEYWORD",
+                            "keyword": keyword
+                        })
+                        
+                        # Fetch context and generate Knowledge Card
+                        contexts = vector_search.search(keyword)
+                        if contexts:
+                            card = await card_generator.generate_card(keyword, contexts)
+                            if card:
+                                await websocket.send_json({
+                                    "type": "CARD",
+                                    "data": card
+                                })
+                    
+                    # Action Item Detection
+                    action_item = detect_action_items(text)
+                    if action_item:
+                        await websocket.send_json({
+                            "type": "ACTION_ITEM",
+                            "text": action_item
+                        })
+                except Exception as ai_error:
+                    logger.error(f"AI Processing error (non-fatal): {ai_error}")
+        except Exception as e:
+            logger.error(f"Transcription callback error: {e}")
+
+    streamer = DeepgramStreamer(on_transcript)
+    if not await streamer.start():
         await websocket.close(code=1011)
         return
 
     try:
+        byte_count = 0
         while True:
             data = await websocket.receive_bytes()
-            await transcription_service.send_audio(data)
+            byte_count += len(data)
+            if byte_count > 100000: # Log every ~100KB
+                logger.info(f"Received {byte_count} bytes of audio")
+                byte_count = 0
+            await streamer.send_audio(data)
     except WebSocketDisconnect:
-        print("Client disconnected")
+        logger.info("WebSocket connection closed")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"WebSocket error: {e}")
+
     finally:
-        await transcription_service.stop()
+        await streamer.stop()
+        try:
+            await websocket.close()
+        except:
+            pass
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
